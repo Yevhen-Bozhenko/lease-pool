@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Optional. The demo is designed to build with plain javac:
+
+      javac -d out src/main/java/demo/*.java
+      java -cp out demo.Benchmark
+
+  This pom exists only so the project drops into a Maven-shaped world unchanged:
+
+      mvn -q compile exec:java
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>demo</groupId>
+  <artifactId>test-account-broker</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+
+  <name>test-account-broker</name>
+  <description>Three strategies for sharing a limited pool of test accounts across parallel tests.</description>
+
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://opensource.org/licenses/MIT</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <exec.mainClass>demo.Benchmark</exec.mainClass>
+  </properties>
+
+  <!--
+    No runtime dependencies on purpose: everything the demo uses is in java.util.concurrent.
+    Both test dependencies are test-scoped, so neither reaches the jar or the plain-javac workflow.
+    TestNG is here only so BrokerTestNgExample compiles; nothing in the suite runs against it.
+  -->
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.13.4</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testng</groupId>
+      <artifactId>testng</artifactId>
+      <version>7.10.2</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.4</version>
+        <configuration>
+          <!--
+            BrokerTestNgExample is documentation that happens to compile: it shows the intended
+            @BeforeMethod/@AfterMethod usage, but it needs a real account pool to be worth running.
+            Excluding it also keeps surefire on the JUnit Platform provider, with TestNG present
+            only as a compile-time dependency.
+          -->
+          <excludes>
+            <exclude>**/BrokerTestNgExample.java</exclude>
+          </excludes>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.1</version>
+        <configuration>
+          <archive>
+            <manifest>
+              <mainClass>demo.Benchmark</mainClass>
+            </manifest>
+          </archive>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.2.0</version>
+        <configuration>
+          <mainClass>demo.Benchmark</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

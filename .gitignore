@@ -1,0 +1,33 @@
+# Compiled output
+out/
+target/
+build/
+bin/
+*.class
+*.jar
+*.war
+*.ear
+
+# JVM crash / profiling artifacts
+hs_err_pid*
+replay_pid*
+*.hprof
+
+# Maven / Gradle wrappers' local state
+.mvn/timing.properties
+.gradle/
+
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.classpath
+.project
+.settings/
+nbproject/private/
+
+# OS noise
+.DS_Store
+Thumbs.db
