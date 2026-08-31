@@ -31,16 +31,16 @@ bad strategies survive so long.
 
 ## The three strategies
 
-All three implement the same interface, `AccountStrategy`, and the benchmark runs the identical
-workload against each. `acquire(owner)` hands back a `Lease`; closing the lease returns the account.
-`Lease` is `AutoCloseable`, so a try-with-resources block releases it even when the test throws —
-which is why that is preferred over calling `release(lease)` by hand.
+All three implement the same interface, `ResourcePool<T>`, and the benchmark runs the identical
+workload against each. `acquire(owner)` hands back a `Lease<T>`; closing the lease returns the
+account. `Lease` is `AutoCloseable`, so a try-with-resources block releases it even when the test
+throws — which is why that is preferred over calling `release(lease)` by hand.
 
 Three rather than two, because the interesting comparison looks like naive vs. broker and isn't.
 Naive is the *fastest* row, so a two-row demo says "correctness costs you 3×" — the wrong lesson, and
 wrong because naive is fast only by being broken. `StaticAssignment` is the row that makes the
 argument work: it is the only strategy the broker actually beats on wall clock, the only
-demonstration of under-utilisation — which is what the capability match exists to fix — and the
+demonstration of under-utilisation — which is what the tag selector exists to fix — and the
 realistic baseline, since hard-coded per-test account ids is what teams actually have.
 
 ### 1. `NaiveSharedList` — fast and wrong
@@ -48,9 +48,9 @@ realistic baseline, since hard-coded per-test account ids is what teams actually
 Scan a shared list, take the first account that looks free. No locking:
 
 ```java
-if (!account.isInUse()) {   // (1) CHECK — free right now
-    ...                     //     ...nothing stops other threads getting here too
-    account.forceHold(me);  // (2) ACT   — claim it
+if (!slot.isInUse()) {   // (1) CHECK — free right now
+    ...                  //     ...nothing stops other threads getting here too
+    slot.forceHold(me);  // (2) ACT   — claim it
 }
 ```
 
@@ -75,22 +75,25 @@ Mutual exclusion is genuine (one monitor per account), so collisions are zero. B
 now set by the most contended id rather than by the pool size: with 6 tests pinned to each of 4 ids,
 those tests run 6-deep in a queue while the other 4 accounts do nothing.
 
-### 3. `AccountBroker` — safe and fast
+### 3. `LeaseBroker` — safe and fast
 
 Three changes, one per problem:
 
-- **Atomic reserve-if-free.** "Is it free?" and "it's mine now" are a single `compareAndSet` inside
-  the broker's lock, so two callers can never take the same account. Fixes strategy 1.
-- **`acquire(owner, capability)`.** A caller asks for *any* free account carrying the tag it needs
+- **Indivisible reserve-if-free.** "Is it free?" and "it's mine now" happen in one critical section
+  under the broker's lock, and the holder field lives in a private slot nothing outside the broker
+  can reach, so two callers can never take the same account. Fixes strategy 1.
+- **`acquire(owner, selector)`.** A caller asks for *any* free account carrying the tags it needs
   instead of naming an id, so every account is usable by every caller. Fixes strategy 2.
 - **TTL leases.** Every claim carries an expiry. An owner that crashes, hangs or is killed without
   releasing has its lease reclaimed automatically, so one dead test cannot permanently shrink the
   pool. Reclaim runs on the acquiring thread under the lock — no background thread, nothing to shut
   down.
 
-Waiters block on a `Condition` rather than spinning, and the lock is **fair** so a steady stream of
-arrivals cannot starve a waiter. Fairness costs a little throughput and buys predictable queueing,
-which is the right trade for a small shared pool.
+Waiters block on a `Condition` rather than spinning, and the lock is **fair**, so no caller barges
+past callers already queued for it. That is a guarantee about the lock and not about the resource:
+a waiter whose reclaim poll expires goes back to the tail of the queue, so callers that arrived
+later are routinely served first. Waiters keep making progress — the acquire timeout is what bounds
+the wait, not the ordering.
 
 ## When this pattern applies
 
@@ -110,64 +113,88 @@ outlives a single run — over a long enough window, some holder always dies wit
 
 ### Limits
 
-Single-process and in-memory. Correctness rests on one `ReentrantLock` and one `AtomicReference` per
-account, which reach exactly as far as one JVM's heap, and leases live in a `HashMap` that dies with
-the process.
+Single-process and in-memory. Correctness rests on one `ReentrantLock`, which reaches exactly as far
+as one JVM's heap, and the leases live in fields that die with the process.
 
 **This is not a distributed lock.** Two brokers over the same accounts keep separate books and will
 double-issue. If your workers span machines, containers or JVMs the pattern still holds but the
 mechanism does not — the reserve and the expiry have to live somewhere every worker can see them: a
 conditional `UPDATE` on a database row, Redis `SET NX PX`, or ZooKeeper/etcd leases. The API shape
-survives that move; the `compareAndSet` does not.
+survives that move; the lock does not.
 
 ## Using the broker in your own project
 
-The broker knows nothing about tests. An **owner** is any label you want to see in a diagnostic; a
-**capability** is an opaque tag your domain defines — `"shopper"`, `"eu-vat"`, `"readonly"`,
-whatever describes how your accounts differ. The public surface is three things: acquire, release,
-and a lease TTL.
+The broker knows nothing about tests, and nothing about accounts either. Three pieces of vocabulary
+are yours to define:
+
+- **The payload `T`** is whatever your callers actually need once they hold one — a login, a JDBC
+  url, a device handle. The broker never looks inside it, so `lease.get()` hands your own type back
+  and you keep no lookup table on the side.
+- **Tags** are free-form strings describing how your resources differ: `"shopper"`, `"eu-vat"`,
+  `"readonly"`. A resource carries a set of them, and this library never checks them against a list
+  of allowed values. That is what keeps it out of your domain.
+- **An owner** is any label you want to see in a diagnostic.
+
+The public surface is acquire, release, and a lease TTL.
 
 ```java
+record Login(String user, String password) { }   // your type, not the library's
+
 // One broker per suite: the pool is a suite-level resource.
-AccountBroker accounts = new AccountBroker(
-        List.of(new Account("acct-01", "shopper"),
-                new Account("acct-02", "shopper"),
-                new Account("acct-03", "merchant")),
+LeaseBroker<Login> accounts = new LeaseBroker<>(
+        List.of(new Resource<>("acct-01", Set.of("shopper", "eu"), new Login("u1", "p1")),
+                new Resource<>("acct-02", Set.of("shopper", "eu", "vat"), new Login("u2", "p2")),
+                new Resource<>("acct-03", Set.of("merchant"), new Login("u3", "p3"))),
         TimeUnit.MINUTES.toMillis(5),    // lease TTL: the safety net for a killed JVM
         TimeUnit.MINUTES.toMillis(1));   // how long a caller waits for a free account
 
-try (Lease lease = accounts.acquire("checkout-test", "shopper")) {
-    logIn(lease.account().id());
+try (Lease<Login> lease = accounts.acquire("checkout-test", Selector.tagged("shopper"))) {
+    logIn(lease.get().user(), lease.get().password());
     ...
 }   // released here however the block exits
 ```
 
-Pick the TTL to sit comfortably above the longest a caller can legitimately hold an account: too low
-and live work gets its account reclaimed underneath it, too high and a crashed run locks accounts
-until somebody notices. `acquire(owner)` with no capability matches any free account.
+`Selector.tagged("shopper", "vat")` matches a resource carrying **all** of those tags. Extra tags
+never disqualify, so `acct-02` above answers a request for `"shopper"` and a request for `"vat"`
+alike, and adding a tag to a resource cannot break an existing caller. `Selector` is a functional
+interface, so a lambda over the tag set works where the built-ins do not fit. `acquire(owner)` with
+no selector matches any free resource.
+
+Pick the TTL to sit comfortably above the longest a caller can legitimately hold a resource: too low
+and live work gets its resource reclaimed underneath it, too high and a crashed run locks resources
+until somebody notices.
+
+Getting that margin wrong is quiet: a reclaim is invisible to the owner it happened to, so a caller
+whose work outran the TTL keeps driving a resource somebody else now holds. Leave real headroom.
 
 ### When acquire fails
 
 The two ways it can fail need opposite responses, so they are different types — no message parsing
 needed to tell them apart.
 
-**`NoAccountAvailableException`** — the pool was saturated: every matching account stayed held for
+**`NoResourceAvailableException`** — the pool was saturated: every matching resource stayed held for
 the whole acquire timeout. Retryable; back off and try again, or fail the test with a clear "no
-capacity" reason. Carries `owner()`, `capability()` and `waited()`.
+capacity" reason. Carries `owner()`, `selector()` and `waited()`.
 
-**`IllegalArgumentException`** — no account in the pool carries that capability. Never retry; waiting
-cannot fix it. Usually a typo, sometimes a tag that environment never provisioned. Thrown *before*
-any waiting, so it is instant and names both the unknown tag and the tags the pool does offer.
+**`IllegalArgumentException`** — nothing in the pool matches that selector at all. Never retry;
+waiting cannot fix it. Usually a typo, sometimes a tag that environment never provisioned, sometimes
+a combination of tags no single resource carries. Thrown *before* any waiting, so it is instant, and
+it names both what was asked for and the tags the pool does offer.
 
 ```java
-try (Lease lease = accounts.acquire("checkout-test", "shopper")) {
+try (Lease<Login> lease = accounts.acquire("checkout-test", Selector.tagged("shopper"))) {
     ...
-} catch (NoAccountAvailableException e) {
-    log("no '%s' account for %s after %d ms".formatted(e.capability(), e.owner(),
+} catch (NoResourceAvailableException e) {
+    log("nothing matching %s for %s after %d ms".formatted(e.selector(), e.owner(),
             e.waited().toMillis()));
     throw e;
 }
 ```
+
+The check is asked of the pool, not of a tag list, so it works for a hand-written `Selector` too. In
+exchange, a selector has to be a pure function of the tag set: one that changes its mind turns that
+instant failure into a silent wait, and it needs a `toString()`, since both messages above print the
+selector to say what was asked for and a lambda inherits one that names nothing.
 
 `src/test/java/demo/BrokerTestNgExample.java` shows the same thing wired into a real framework, with
 TestNG `@BeforeMethod`/`@AfterMethod` leasing an account around each test method (and `alwaysRun` on
@@ -176,12 +203,14 @@ the teardown, so a failing test still returns its account). It is compiled so it
 
 ## Running it
 
-Plain JDK (21+), no build tool (on Windows PowerShell, use `src\main\java\demo\*.java`):
+Plain JDK (21+), no build tool:
 
 ```bash
-javac -d out src/main/java/demo/*.java
+javac -d out src/main/java/io/github/yevhenbozhenko/pool/*.java src/main/java/demo/*.java
 java -cp out demo.Benchmark
 ```
+
+On Windows PowerShell, use backslashes in those two source paths.
 
 With Maven, if you prefer:
 
@@ -197,9 +226,12 @@ state. To change the shape of the run, edit the constants at the top of `Benchma
 
 ### Tests
 
-Eight JUnit cases pin the claims this README makes — seven on the broker, one on the naive strategy's
-spin bound. Each carries a `@DisplayName` stating what it checks, so `AccountBrokerTest.java` reads
-as a list of the guarantees.
+Eleven JUnit cases pin the claims this README makes — nine on the broker, one on the naive strategy's
+spin bound, one on the static strategy refusing a lease over a resource it never issued. Each
+carries a `@DisplayName` stating what it checks, so `LeaseBrokerTest.java` reads as a list of the
+guarantees.
+It sits in the library's own package and touches nothing from `demo`, so the library is testable by
+itself.
 
 ```bash
 mvn test
@@ -208,11 +240,13 @@ mvn test
 They exist because the benchmark *cannot* catch some of these: it runs a 5 s lease TTL against 40 ms
 of work, so the stale-release hazard stays invisible however many times you run it.
 
-The two TTL cases advance a fake clock by hand rather than sleeping past the expiry: a sleep long
+Three of the TTL cases advance a fake clock by hand rather than sleeping past the expiry: a sleep long
 enough to be reliable on a loaded CI agent is also long enough to slow the suite, and it still only
 makes the expiry *probable*. That clock drives lease expiry only — the acquire deadline stays on the
-real clock, so a regression in TTL reclaim *fails* these tests instead of hanging them. The whole
-suite runs in well under a second, and both test dependencies are test-scoped, so the demo has zero
+real clock, so a regression in TTL reclaim *fails* these tests instead of hanging them.
+
+The fourth sleeps because it has to: a frozen clock cannot drive the timed `await` it exists to pin.
+The suite runs in about a second, and both test dependencies are test-scoped, so the demo has zero
 runtime dependencies.
 
 ## Example output
@@ -225,14 +259,14 @@ pool=8, parallel tests=24, tests per static id=6, work=40 ms/test
 1 warm-up round + 5 measured rounds, median reported
 ideal wall clock for a fully shared pool: 120 ms
 
-Strategy            Collisions   Duration (ms)   Accounts used   Notes
+Strategy            Collisions   Duration (ms)  Resources used   Notes
 -----------------------------------------------------------------------------------------------------------------
 NaiveSharedList             24              45          1 / 8    unsynchronised scan; check-then-act race
-StaticAssignment             0             280          4 / 8    one fixed account per test; shared ids serialise
-AccountBroker                0             139          8 / 8    atomic claim + acquire(capability) + TTL leases
+StaticAssignment             0             280          4 / 8    one fixed resource per test; shared ids serialise
+LeaseBroker                  0             139          8 / 8    claim under one lock + selector + TTL leases
 
 TTL reclaim demo (a test that never releases)
-crashing-test leased ACC-ADM (ttl 150 ms), then died without releasing
+crashing-test leased ACC-ADM (adm@example.test, ttl 150 ms), then died without releasing
 next-test leased ACC-ADM after 1 expired lease(s) were reclaimed
 crashing-test released its expired lease; ACC-ADM still held by next-test
 ```
@@ -260,7 +294,7 @@ duration is pessimistic. It still wins, which is the point.
 ### Reproducibility
 
 Runs on the same machine agree exactly where it matters and only roughly where it does not. Collision
-counts and accounts-used are identical every time — integer facts about who held what, kept that way
+counts and resources-used are identical every time — integer facts about who held what, kept that way
 by no randomness, fixed strategy order and a discarded warm-up round per strategy. Durations move by
 10–15%, and the **median of 5 timed rounds** narrows that without removing it.
 
@@ -272,7 +306,7 @@ ratio, not a millisecond count; the numbers in the table are one machine's sampl
 
 The rest of the honesty checklist, since this table is the repo's main claim:
 
-- **Collisions are counted by registration, not sampled.** Polling `isHeldBy` would miss a collision
+- **Collisions are counted by registration, not sampled.** Polling the holder would miss a collision
   that opens and closes between polls — an undercount in the one column the whole argument rests on.
   `CollisionDetector` registers an owner when it starts using an account and deregisters it when it
   stops, so an overlap is caught by two owners being registered at once. It can only undercount,
@@ -299,7 +333,7 @@ All knobs are constants at the top of `src/main/java/demo/Benchmark.java`:
 | `TESTS_PER_STATIC_ID`       | 6       | tests hard-coded to the same id (static strategy)         |
 | `WORK_DURATION_MILLIS`      | 40      | pretend work per test (must stay under the spin limit)    |
 | `NAIVE_RACE_WINDOW_MILLIS`  | 2       | width of the naive check-then-act window                  |
-| `CAPABILITY`                | STANDARD| the tag every benchmark account carries                   |
+| `TAG`                       | standard| the tag every benchmark resource carries                  |
 | `LEASE_TTL_MILLIS`          | 5000    | broker lease TTL (must exceed the work duration)          |
 | `ACQUIRE_TIMEOUT_MILLIS`    | 30000   | how long a test waits for the broker before failing       |
 | `WARMUP_ROUNDS`             | 1       | discarded rounds per strategy                             |
@@ -317,7 +351,7 @@ Three experiments worth running, with what they produced on the machine above (b
 | Change | What happens |
 | --- | --- |
 | `POOL_SIZE` 8 → 16 | broker **139 → 92 ms**; naive and static unchanged. Only the broker can use a bigger pool. |
-| `TESTS_PER_STATIC_ID` 6 → 12 | static **280 → 561 ms** on `2 / 8` accounts; naive and broker unchanged. Only the static row feels its own config. |
+| `TESTS_PER_STATIC_ID` 6 → 12 | static **279 → 561 ms** on `2 / 8` accounts; naive and broker unchanged. Only the static row feels its own config. |
 | `NAIVE_RACE_WINDOW_MILLIS` 2 → 0 | naive still collides (~18 tests), now scattered over `8 / 8` accounts in ~90 ms. |
 
 The last one matters most: removing the window does **not** remove the bug. With 24 threads released
@@ -326,10 +360,18 @@ run — one account, every test — instead of a number that moves around.
 
 ## Layout
 
-`src/main/java/demo/` holds the three strategies — `NaiveSharedList`, `StaticAssignment`,
-`AccountBroker` — over a shared `Account` / `Lease` / `AccountStrategy` core, plus
-`NoAccountAvailableException`, `Benchmark`, `CollisionDetector` and
-`TtlReclaimDemo`. `src/test/java/demo/` holds the JUnit suite and the TestNG
+Two packages, and the split is the point. Take the first one and leave the second.
+
+`src/main/java/io/github/yevhenbozhenko/pool/` **is the library**: `Resource`, `Selector`, `Lease`,
+the `ResourcePool` interface, `LeaseBroker`, and `NoResourceAvailableException`. Six files, no
+dependencies, nothing about tests or accounts in any of them.
+
+`src/main/java/demo/` **is the demonstration of it**: the two flawed strategies `NaiveSharedList` and
+`StaticAssignment`, their shared `Slot`, plus `Benchmark`, `CollisionDetector` and `TtlReclaimDemo`.
+It consumes the library exactly as your own project would.
+
+Tests follow the same line. `src/test/java/io/github/yevhenbozhenko/pool/LeaseBrokerTest.java` tests
+the library alone; `src/test/java/demo/` holds one test per flawed strategy and the TestNG
 usage example. Every class opens with a comment saying what it is for. `pom.xml` is optional.
 
 ## Caveats
@@ -343,14 +385,19 @@ usage example. Every class opens with a comment saying what it is for. `pom.xml`
   persistence, no CI pipeline, no publishing setup, no fourth strategy. Configuration is the
   constants at the top of `Benchmark.java` and output is `System.out`, so the concurrency is what a
   reader spends their attention on.
-- `capability` is a plain `String` rather than an enum or a type parameter. An enum would catch typos
-  at compile time, but it would also pin the broker to one vocabulary, and being vocabulary-agnostic
-  is the point. The up-front check in `acquire` recovers most of the benefit at run time.
+- Tags are plain `String`s rather than an enum. An enum would catch typos at compile time, but it
+  would also pin the broker to one vocabulary, and being vocabulary-agnostic is the point. The
+  up-front check in `acquire` recovers most of the benefit at run time. The payload is a type
+  parameter for the opposite reason: it is the one thing that *is* yours, so the library should
+  never see inside it.
 - Two known gaps are accepted rather than fixed: the 20 ms reclaim poll wakes waiters more often than
   lease expiry actually requires (fixing it means real logic in the file whose job is to be obviously
-  correct), and `AccountStrategy.release(Lease)` is public, so a caller can bypass try-with-resources
+  correct), and `ResourcePool.release(Lease)` is public, so a caller can bypass try-with-resources
   if they insist. Narrowing it would make the interface less self-explanatory, and the interface is
-  half the teaching material.
+  half the teaching material. The poll is wasteful but it is not optional: `reclaimExpiredLeases`
+  never signals the condition, so the poll is the only way a parked waiter ever notices an expired
+  lease. Widening it to the full remaining timeout leaves that waiter asleep until the acquire times
+  out; `parkedWaiterIsWokenByTheReclaimPoll` is the case that catches it.
 - The naive strategy's exact collision count is timing-dependent by nature. It should always be
   well above zero with the default race window; that is all the demo claims.
 

@@ -1,5 +1,9 @@
 package demo;
 
+import io.github.yevhenbozhenko.pool.Lease;
+import io.github.yevhenbozhenko.pool.LeaseBroker;
+import io.github.yevhenbozhenko.pool.Resource;
+import io.github.yevhenbozhenko.pool.ResourcePool;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -11,10 +15,10 @@ import java.util.function.Supplier;
 import java.util.function.ToLongFunction;
 
 /** Runs one identical workload against all three strategies and prints a comparison table:
- *  {@code PARALLEL_TESTS} threads start together, each leases an account, does
+ *  {@code PARALLEL_TESTS} threads start together, each leases a resource, does
  *  {@code WORK_DURATION_MILLIS} of pretend work, and releases it.
  *
- *  <p>The collision and accounts-used columns are exact by construction — no randomness, fixed
+ *  <p>The collision and resources-used columns are exact by construction — no randomness, fixed
  *  order, a discarded warm-up, a median. Durations still move 10-15%: that is the sleep in
  *  {@code runOneTest}, not the strategies, so read them as a ratio. See the README. */
 public final class Benchmark {
@@ -22,14 +26,14 @@ public final class Benchmark {
     static final int POOL_SIZE = 8;
     /** Deliberately larger than the pool, as on real CI. */
     static final int PARALLEL_TESTS = 24;
-    /** Tests hard-coded to the same account id in the static strategy. */
+    /** Tests hard-coded to the same resource in the static strategy. */
     static final int TESTS_PER_STATIC_ID = 6;
     static final long WORK_DURATION_MILLIS = 40;
     /** Widens the gap between checking and claiming in strategy 1, so its failure is repeatable. */
     static final long NAIVE_RACE_WINDOW_MILLIS = 2;
     static final long LEASE_TTL_MILLIS = 5_000;
     static final long ACQUIRE_TIMEOUT_MILLIS = 30_000;
-    static final String CAPABILITY = "STANDARD";
+    static final String TAG = "standard";
     static final int WARMUP_ROUNDS = 1;
     /** Odd, so the median is a real measurement rather than an average of two. */
     static final int MEASURED_ROUNDS = 5;
@@ -49,24 +53,24 @@ public final class Benchmark {
                 WARMUP_ROUNDS, MEASURED_ROUNDS,
                 ((PARALLEL_TESTS + POOL_SIZE - 1) / POOL_SIZE) * WORK_DURATION_MILLIS);
         System.out.printf("%-18s %11s %15s %15s   %s%n",
-                "Strategy", "Collisions", "Duration (ms)", "Accounts used", "Notes");
+                "Strategy", "Collisions", "Duration (ms)", "Resources used", "Notes");
         System.out.println("-".repeat(113));
 
         measureAndPrintRow("NaiveSharedList", "unsynchronised scan; check-then-act race", tests,
-                () -> new NaiveSharedList(newPool(), NAIVE_RACE_WINDOW_MILLIS));
-        measureAndPrintRow("StaticAssignment", "one fixed account per test; shared ids serialise",
-                tests, () -> new StaticAssignment(newPool(), tests, TESTS_PER_STATIC_ID));
-        measureAndPrintRow("AccountBroker", "atomic claim + acquire(capability) + TTL leases", tests,
-                () -> new AccountBroker(newPool(), LEASE_TTL_MILLIS, ACQUIRE_TIMEOUT_MILLIS));
+                () -> new NaiveSharedList<>(newPool(), NAIVE_RACE_WINDOW_MILLIS));
+        measureAndPrintRow("StaticAssignment", "one fixed resource per test; shared ids serialise",
+                tests, () -> new StaticAssignment<>(newPool(), tests, TESTS_PER_STATIC_ID));
+        measureAndPrintRow("LeaseBroker", "claim under one lock + selector + TTL leases", tests,
+                () -> new LeaseBroker<>(newPool(), LEASE_TTL_MILLIS, ACQUIRE_TIMEOUT_MILLIS));
         TtlReclaimDemo.run();
     }
 
     /** One round's three columns. Measured together; each is reduced to a median independently. */
-    private record Round(long collisions, long millis, long accountsUsed) {
+    private record Round(long collisions, long millis, long resourcesUsed) {
     }
 
     private static void measureAndPrintRow(String name, String notes, List<String> tests,
-            Supplier<AccountStrategy> newStrategy) throws Exception {
+            Supplier<ResourcePool<String>> newStrategy) throws Exception {
         for (int i = 0; i < WARMUP_ROUNDS; i++) {
             runRound(newStrategy.get(), tests); // discarded
         }
@@ -76,7 +80,7 @@ public final class Benchmark {
         }
         System.out.printf("%-18s %11d %15d %10d / %-2d   %s%n", name,
                 median(rounds, Round::collisions), median(rounds, Round::millis),
-                median(rounds, Round::accountsUsed), POOL_SIZE, notes);
+                median(rounds, Round::resourcesUsed), POOL_SIZE, notes);
     }
 
     /** Each column is taken independently: they answer separate questions about the same run. */
@@ -85,7 +89,8 @@ public final class Benchmark {
         return sorted[sorted.length / 2];
     }
 
-    private static Round runRound(AccountStrategy strategy, List<String> tests) throws Exception {
+    private static Round runRound(ResourcePool<String> strategy, List<String> tests)
+            throws Exception {
         CollisionDetector detector = new CollisionDetector();
         Set<String> failures = ConcurrentHashMap.newKeySet();
         Set<String> completed = ConcurrentHashMap.newKeySet();
@@ -119,18 +124,18 @@ public final class Benchmark {
 
         // A round that lost a test measured less work, and the median would hide it. The completion
         // count is what makes this airtight: an Error never reaches the catches above.
-        if (!failures.isEmpty() || completed.size() != tests.size()) {
+        if (completed.size() != tests.size()) {
             throw new IllegalStateException(strategy.getClass().getSimpleName() + ": only "
                     + completed.size() + " of " + tests.size() + " tests completed"
                     + (failures.isEmpty() ? "" : ", e.g. " + failures.iterator().next()));
         }
-        return new Round(detector.collidedOwnerCount(), millis, detector.accountsUsed());
+        return new Round(detector.collidedOwnerCount(), millis, detector.resourcesUsed());
     }
 
-    private static void runOneTest(AccountStrategy strategy, String test,
+    private static void runOneTest(ResourcePool<String> strategy, String test,
             CollisionDetector detector) throws InterruptedException {
-        try (Lease lease = strategy.acquire(test)) {
-            String id = lease.account().id();
+        try (Lease<String> lease = strategy.acquire(test)) {
+            String id = lease.resource().id();
             detector.recordAcquired(id, test);
             try {
                 // Identical in all three rows, so only acquire and release differ. Also the
@@ -142,12 +147,15 @@ public final class Benchmark {
         }
     }
 
-    /** Called once per round, so no round inherits another's state. */
-    private static List<Account> newPool() {
-        List<Account> accounts = new ArrayList<>();
+    /** Called once per round, so no round inherits another's state. The payload is a stand-in for
+     *  whatever a real caller leases; the benchmark only times acquire and release, so it never
+     *  reads one. */
+    private static List<Resource<String>> newPool() {
+        List<Resource<String>> resources = new ArrayList<>();
         for (int i = 1; i <= POOL_SIZE; i++) {
-            accounts.add(new Account(String.format("ACC-%02d", i), CAPABILITY));
+            String id = String.format("ACC-%02d", i);
+            resources.add(new Resource<>(id, Set.of(TAG), "https://staging.example/" + id));
         }
-        return accounts;
+        return resources;
     }
 }

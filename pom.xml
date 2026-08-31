@@ -2,7 +2,7 @@
 <!--
   Optional. The demo is designed to build with plain javac:
 
-      javac -d out src/main/java/demo/*.java
+      javac -d out src/main/java/io/github/yevhenbozhenko/pool/*.java src/main/java/demo/*.java
       java -cp out demo.Benchmark
 
   This pom exists only so the project drops into a Maven-shaped world unchanged:
