@@ -67,17 +67,6 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.5.4</version>
-        <configuration>
-          <!--
-            BrokerTestNgExample is documentation that happens to compile: it shows the intended
-            @BeforeMethod/@AfterMethod usage, but it needs a real account pool to be worth running.
-            Excluding it also keeps surefire on the JUnit Platform provider, with TestNG present
-            only as a compile-time dependency.
-          -->
-          <excludes>
-            <exclude>**/BrokerTestNgExample.java</exclude>
-          </excludes>
-        </configuration>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

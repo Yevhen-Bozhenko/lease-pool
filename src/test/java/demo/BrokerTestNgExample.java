@@ -13,19 +13,15 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-/** The intended usage in a real test framework: one broker for the whole suite, one leased resource
- *  per test method, returned however the test ends. Illustration only — compiled so it cannot rot,
- *  but excluded from {@code mvn test}. The annotations are the only framework-specific part; a
- *  JUnit extension has the same shape. */
+/** The intended usage in a real test framework: one broker per suite, one leased resource per test
+ *  method, returned however the test ends. Nothing runs this file: it is not named {@code ...Test}
+ *  and there is no TestNG engine. See {@link BrokerJUnitExampleTest} for the JUnit 5 shape. */
 public class BrokerTestNgExample {
 
-    /** Whatever your tests actually need once they hold an account. The broker never looks inside
-     *  it, which is the whole reason the payload is a type parameter. */
     private record Login(String user, String password) {
     }
 
-    /** One broker per suite: the pool is a suite-level resource. The TTL is the safety net — if this
-     *  JVM is killed mid-test, the leases expire instead of staying held forever. */
+    /** One broker per suite. The TTL is the safety net if this JVM is killed mid-test. */
     private static final LeaseBroker<Login> ACCOUNTS = new LeaseBroker<>(
             List.of(new Resource<>("acct-01", Set.of("shopper", "eu"), new Login("u1", "p1")),
                     new Resource<>("acct-02", Set.of("shopper", "eu", "vat"), new Login("u2", "p2")),
@@ -40,11 +36,7 @@ public class BrokerTestNgExample {
 
     @BeforeMethod
     public void leaseAccount(Method method) throws InterruptedException {
-        // "shopper" is this suite's own vocabulary; the broker attaches no meaning to it. The method
-        // name makes a stuck lease easy to trace, and the counter keeps the label unique per
-        // invocation, which is what ResourcePool.acquire asks of concurrent holders and what lets
-        // holderOf name the exact run sitting on an account. Sharing a label would not let one
-        // test's stale close() free another's lease: release matches on lease identity.
+        // The counter keeps the owner label unique per invocation, which is what acquire asks for.
         lease.set(ACCOUNTS.acquire(method.getName() + "#" + invocation.incrementAndGet(),
                 Selector.tagged("shopper")));
     }

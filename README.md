@@ -116,10 +116,21 @@ exchange, a selector has to be a pure function of the tag set: one that changes 
 instant failure into a silent wait, and it needs a `toString()`, since both messages above print the
 selector to say what was asked for and a lambda inherits one that names nothing.
 
-`src/test/java/demo/BrokerTestNgExample.java` shows the same thing wired into a real framework, with
-TestNG `@BeforeMethod`/`@AfterMethod` leasing an account around each test method (and `alwaysRun` on
-the teardown, so a failing test still returns its account). It is compiled so it cannot rot, but
-`mvn test` does not run it — there are no real accounts behind those ids.
+Two files show the same thing wired into a real framework, leasing an account around each test
+method and returning it however the test ends.
+
+`src/test/java/demo/BrokerJUnitExampleTest.java` holds a JUnit 5 extension: `beforeEach` acquires,
+`afterEach` releases, and a `ParameterResolver` hands the payload to the test method as an argument,
+so the test itself never mentions the pool. The extension is the nested `LeasedAccount` class, and
+it belongs in your project rather than in the library, since shipping it would put JUnit on the
+library's compile path. The file is named `...Test`, so surefire runs it and the example cannot rot
+unnoticed.
+
+`src/test/java/demo/BrokerTestNgExample.java` is the same shape in TestNG, with
+`@BeforeMethod`/`@AfterMethod` and `alwaysRun` on the teardown so a failing test still returns its
+account. It is compiled so it cannot rot, but two things stop it running: its name is not `...Test`,
+so surefire never scans it, and the JUnit Platform that surefire runs here has no engine for
+TestNG's annotations.
 
 ## The problem
 
@@ -228,10 +239,12 @@ state. To change the shape of the run, edit the constants at the top of `Benchma
 
 ### Tests
 
-Eleven JUnit cases pin the claims this README makes — nine on the broker, one on the naive strategy's
-spin bound, one on the static strategy refusing a lease over a resource it never issued. Each
-carries a `@DisplayName` stating what it checks, so `LeaseBrokerTest.java` reads as a list of the
-guarantees.
+Thirteen JUnit cases run. Eleven pin the claims this README makes — nine on the broker, one on the
+naive strategy's spin bound, one on the static strategy refusing a lease over a resource it never
+issued. The other two are the JUnit usage example above; they pin only that the wiring compiles and
+runs, while an `@AfterAll` beside them asserts every lease came back, which is the part that catches
+a regression. Each of the eleven carries a `@DisplayName` stating
+what it checks, so `LeaseBrokerTest.java` reads as a list of the guarantees.
 It sits in the library's own package and touches nothing from `demo`, so the library is testable by
 itself.
 
@@ -328,18 +341,18 @@ constant modelling a legacy config, not an emergent measurement.
 
 All knobs are constants at the top of `src/main/java/demo/Benchmark.java`:
 
-| Constant                    | Default | Meaning                                                  |
-| --------------------------- | ------- | -------------------------------------------------------- |
-| `POOL_SIZE`                 | 8       | accounts in the shared pool                               |
-| `PARALLEL_TESTS`            | 24      | tests started simultaneously                              |
-| `TESTS_PER_STATIC_ID`       | 6       | tests hard-coded to the same id (static strategy)         |
-| `WORK_DURATION_MILLIS`      | 40      | pretend work per test (must stay under the spin limit)    |
-| `NAIVE_RACE_WINDOW_MILLIS`  | 2       | width of the naive check-then-act window                  |
-| `TAG`                       | standard| the tag every benchmark resource carries                  |
-| `LEASE_TTL_MILLIS`          | 5000    | broker lease TTL (must exceed the work duration)          |
-| `ACQUIRE_TIMEOUT_MILLIS`    | 30000   | how long a test waits for the broker before failing       |
-| `WARMUP_ROUNDS`             | 1       | discarded rounds per strategy                             |
-| `MEASURED_ROUNDS`           | 5       | timed rounds per strategy; the median is reported         |
+| Constant                   | Default  | Meaning                                                |
+| -------------------------- | -------- | ------------------------------------------------------ |
+| `POOL_SIZE`                | 8        | accounts in the shared pool                            |
+| `PARALLEL_TESTS`           | 24       | tests started simultaneously                           |
+| `TESTS_PER_STATIC_ID`      | 6        | tests hard-coded to the same id (static strategy)      |
+| `WORK_DURATION_MILLIS`     | 40       | pretend work per test (must stay under the spin limit) |
+| `NAIVE_RACE_WINDOW_MILLIS` | 2        | width of the naive check-then-act window               |
+| `TAG`                      | standard | the tag every benchmark resource carries               |
+| `LEASE_TTL_MILLIS`         | 5000     | broker lease TTL (must exceed the work duration)       |
+| `ACQUIRE_TIMEOUT_MILLIS`   | 30000    | how long a test waits for the broker before failing    |
+| `WARMUP_ROUNDS`            | 1        | discarded rounds per strategy                          |
+| `MEASURED_ROUNDS`          | 5        | timed rounds per strategy; the median is reported      |
 
 One bound sits outside that file: `DEFAULT_SPIN_LIMIT_MILLIS` in `NaiveSharedList` (30 s), a wedge
 guard rather than a knob. A naive waiter whose peer holds an account for longer than that aborts with
@@ -350,11 +363,11 @@ static and broker rows and the TTL demo with it, not just the naive row. So rais
 Three experiments worth running, with what they produced on the machine above (baseline: naive
 45 ms, static 280 ms, broker 139 ms):
 
-| Change | What happens |
-| --- | --- |
-| `POOL_SIZE` 8 → 16 | broker **139 → 92 ms**; naive and static unchanged. Only the broker can use a bigger pool. |
-| `TESTS_PER_STATIC_ID` 6 → 12 | static **279 → 561 ms** on `2 / 8` accounts; naive and broker unchanged. Only the static row feels its own config. |
-| `NAIVE_RACE_WINDOW_MILLIS` 2 → 0 | naive still collides (~18 tests), now scattered over `8 / 8` accounts in ~90 ms. |
+| Change                           | What happens                                                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `POOL_SIZE` 8 → 16               | broker **139 → 92 ms**; naive and static unchanged. Only the broker can use a bigger pool.                         |
+| `TESTS_PER_STATIC_ID` 6 → 12     | static **279 → 561 ms** on `2 / 8` accounts; naive and broker unchanged. Only the static row feels its own config. |
+| `NAIVE_RACE_WINDOW_MILLIS` 2 → 0 | naive still collides (~18 tests), now scattered over `8 / 8` accounts in ~90 ms.                                   |
 
 The last one matters most: removing the window does **not** remove the bug. With 24 threads released
 at once the unsynchronised scan races on its own. The window only makes the failure identical every
@@ -373,8 +386,8 @@ dependencies, nothing about tests or accounts in any of them.
 It consumes the library exactly as your own project would.
 
 Tests follow the same line. `src/test/java/io/github/yevhenbozhenko/pool/LeaseBrokerTest.java` tests
-the library alone; `src/test/java/demo/` holds one test per flawed strategy and the TestNG
-usage example. Every class opens with a comment saying what it is for. `pom.xml` is optional.
+the library alone; `src/test/java/demo/` holds one test per flawed strategy and the two framework
+usage examples. Every class opens with a comment saying what it is for. `pom.xml` is optional.
 
 ## Caveats
 
