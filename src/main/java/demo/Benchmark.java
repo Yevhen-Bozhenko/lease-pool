@@ -46,7 +46,7 @@ public final class Benchmark {
         for (int i = 0; i < PARALLEL_TESTS; i++) {
             tests.add(String.format("test-%02d", i));
         }
-        System.out.printf("test-account-broker%npool=%d, parallel tests=%d, tests per static id=%d,"
+        System.out.printf("lease-pool%npool=%d, parallel tests=%d, tests per static id=%d,"
                 + " work=%d ms/test%n%d warm-up round + %d measured rounds, median reported%n"
                 + "ideal wall clock for a fully shared pool: %d ms%n%n",
                 POOL_SIZE, PARALLEL_TESTS, TESTS_PER_STATIC_ID, WORK_DURATION_MILLIS,

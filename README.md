@@ -1,12 +1,13 @@
-# test-account-broker
+# lease-pool
 
-A small, self-contained Java reference implementation of three ways to share a limited pool of test
-accounts across parallel tests — and a benchmark that shows what each one costs you.
+A small, dependency-free Java library for handing a limited pool of shared resources to parallel
+workers: **reserve-if-free**, so two workers never hold the same resource, and **expiring leases**, so
+a worker that never releases cannot shrink the pool. JDK 21+, six files, no dependencies.
 
-**If you read one thing, read [Example output](#example-output).** Three strategies, one identical
-workload: the naive one collides on all 24 tests, the other two never collide — and the broker does
-it in half the static strategy's wall clock, using the whole pool instead of half of it. Everything
-below explains that table.
+The repository is also its own evidence. The library is benchmarked against the two strategies teams
+reach for first, on one identical workload — see **[Example output](#example-output)**: the naive one
+collides on all 24 tests, the other two never collide, and the broker does it in half the static
+strategy's wall clock while using the whole pool instead of half of it.
 
 > This is a **generic, illustrative reference implementation of a common pattern**. It is not tied to
 > any specific system, product or codebase, and it contains no real credentials or endpoints. All
@@ -14,98 +15,17 @@ below explains that table.
 > and OS timer granularity — on Windows in particular `Thread.sleep` rounds up to ~15 ms, which
 > inflates every duration). Run it yourself; the *shape* of the result is the point, not the digits.
 
-## The problem
-
-Tests need accounts. There are never enough of them, so a pool is shared. Once the suite runs in
-parallel, the pool — not the hardware — caps how fast it can go, and you face two independent failure
-modes:
-
-1. **Collisions** — two tests use the same account at the same time. Symptoms are flaky,
-   unreproducible failures: your fixture data changes underneath you, a logout in one test breaks
-   another, an assertion sees a state no test created.
-2. **Under-utilisation** — tests wait for accounts that are not actually busy. Nothing fails; the
-   suite is just slow, and adding accounts to the pool does not help.
-
-A good strategy has to solve *both*. It is easy to solve either one alone, which is exactly why the
-bad strategies survive so long.
-
-## The three strategies
-
-All three implement the same interface, `ResourcePool<T>`, and the benchmark runs the identical
-workload against each. `acquire(owner)` hands back a `Lease<T>`; closing the lease returns the
-account. `Lease` is `AutoCloseable`, so a try-with-resources block releases it even when the test
-throws — which is why that is preferred over calling `release(lease)` by hand.
-
-Three rather than two, because the interesting comparison looks like naive vs. broker and isn't.
-Naive is the *fastest* row, so a two-row demo says "correctness costs you 3×" — the wrong lesson, and
-wrong because naive is fast only by being broken. `StaticAssignment` is the row that makes the
-argument work: it is the only strategy the broker actually beats on wall clock, the only
-demonstration of under-utilisation — which is what the tag selector exists to fix — and the
-realistic baseline, since hard-coded per-test account ids is what teams actually have.
-
-### 1. `NaiveSharedList` — fast and wrong
-
-Scan a shared list, take the first account that looks free. No locking:
-
-```java
-if (!slot.isInUse()) {   // (1) CHECK — free right now
-    ...                  //     ...nothing stops other threads getting here too
-    slot.forceHold(me);  // (2) ACT   — claim it
-}
-```
-
-Check and act are two separate steps, so any number of threads can pass the check before any of them
-acts, and all of them walk away "owning" the same account. In production code the window is
-nanoseconds wide, which is what makes this bug rare and environment-dependent. The demo widens it
-with a 2 ms sleep so the failure lands identically on every run — see [Tuning](#tuning) for what
-happens when you set that window back to `0`.
-
-It is also the fastest strategy in the table, because nobody ever waits. Speed is not evidence that
-a pool is being shared correctly.
-
-### 2. `StaticAssignment` — safe and slow
-
-The legacy fix: hard-code an account id per test at setup ("this suite always logs in as ACC-03").
-There are more tests than ids, so several tests share one id. The rules are the whole story:
-
-- a test may use **only** its assigned account;
-- if that account is busy the test waits, **even when other accounts sit idle**.
-
-Mutual exclusion is genuine (one monitor per account), so collisions are zero. But the wall clock is
-now set by the most contended id rather than by the pool size: with 6 tests pinned to each of 4 ids,
-those tests run 6-deep in a queue while the other 4 accounts do nothing.
-
-### 3. `LeaseBroker` — safe and fast
-
-Three changes, one per problem:
-
-- **Indivisible reserve-if-free.** "Is it free?" and "it's mine now" happen in one critical section
-  under the broker's lock, and the holder field lives in a private slot nothing outside the broker
-  can reach, so two callers can never take the same account. Fixes strategy 1.
-- **`acquire(owner, selector)`.** A caller asks for *any* free account carrying the tags it needs
-  instead of naming an id, so every account is usable by every caller. Fixes strategy 2.
-- **TTL leases.** Every claim carries an expiry. An owner that crashes, hangs or is killed without
-  releasing has its lease reclaimed automatically, so one dead test cannot permanently shrink the
-  pool. Reclaim runs on the acquiring thread under the lock — no background thread, nothing to shut
-  down.
-
-Waiters block on a `Condition` rather than spinning, and the lock is **fair**, so no caller barges
-past callers already queued for it. That is a guarantee about the lock and not about the resource:
-a waiter whose reclaim poll expires goes back to the tail of the queue, so callers that arrived
-later are routinely served first. Waiters keep making progress — the acquire timeout is what bounds
-the wait, not the ordering.
-
 ## When this pattern applies
 
-The broker is a **reserve-if-free pool with expiring leases**, and nothing in it is specific to test
-accounts. It fits wherever three things are true at once: the resource is shared, holding it is
+`LeaseBroker` is a **reserve-if-free pool with expiring leases**, and nothing in it is specific to
+test accounts. It fits wherever three things are true at once: the resource is shared, holding it is
 mutually exclusive, and the pool is smaller than the number of workers that want one. That third
 condition is what turns a correctness problem into a throughput problem — with enough resources to go
 round every strategy looks fine, which is why these bugs surface only under parallelism.
 
 Same shape, different domain: seats on a licensed tool, sandbox tenants or database schemas handed to
 parallel CI jobs, rate-limited API keys, devices in a hardware lab, staging environments, serial
-ports. The two failure modes from the top reappear unchanged in all of them.
+ports. The two failure modes in [The problem](#the-problem) reappear unchanged in all of them.
 
 The two ideas are separable, and you may need only one. Reserve-if-free is what makes a pool
 *correct*, so it is never optional. TTL leases make it *self-healing*, which matters once the pool
@@ -201,6 +121,88 @@ TestNG `@BeforeMethod`/`@AfterMethod` leasing an account around each test method
 the teardown, so a failing test still returns its account). It is compiled so it cannot rot, but
 `mvn test` does not run it — there are no real accounts behind those ids.
 
+## The problem
+
+Test accounts are the running example from here on, because they show both failures at once;
+substitute your own resource freely. There are never enough of them, so a pool is shared. Once the
+suite runs in parallel, the pool — not the hardware — caps how fast it can go, and you face two
+independent failure modes:
+
+1. **Collisions** — two tests use the same account at the same time. Symptoms are flaky,
+   unreproducible failures: your fixture data changes underneath you, a logout in one test breaks
+   another, an assertion sees a state no test created.
+2. **Under-utilisation** — tests wait for accounts that are not actually busy. Nothing fails; the
+   suite is just slow, and adding accounts to the pool does not help.
+
+A good strategy has to solve *both*. It is easy to solve either one alone, which is exactly why the
+bad strategies survive so long.
+
+## The three strategies
+
+All three implement the same interface, `ResourcePool<T>`, and the benchmark runs the identical
+workload against each. `acquire(owner)` hands back a `Lease<T>`; closing the lease returns the
+account. `Lease` is `AutoCloseable`, so a try-with-resources block releases it even when the test
+throws — which is why that is preferred over calling `release(lease)` by hand.
+
+Three rather than two, because the interesting comparison looks like naive vs. broker and isn't.
+Naive is the *fastest* row, so a two-row demo says "correctness costs you 3×" — the wrong lesson, and
+wrong because naive is fast only by being broken. `StaticAssignment` is the row that makes the
+argument work: it is the only strategy the broker actually beats on wall clock, the only
+demonstration of under-utilisation — which is what the tag selector exists to fix — and the
+realistic baseline, since hard-coded per-test account ids is what teams actually have.
+
+### 1. `NaiveSharedList` — fast and wrong
+
+Scan a shared list, take the first account that looks free. No locking:
+
+```java
+if (!slot.isInUse()) {   // (1) CHECK — free right now
+    ...                  //     ...nothing stops other threads getting here too
+    slot.forceHold(me);  // (2) ACT   — claim it
+}
+```
+
+Check and act are two separate steps, so any number of threads can pass the check before any of them
+acts, and all of them walk away "owning" the same account. In production code the window is
+nanoseconds wide, which is what makes this bug rare and environment-dependent. The demo widens it
+with a 2 ms sleep so the failure lands identically on every run — see [Tuning](#tuning) for what
+happens when you set that window back to `0`.
+
+It is also the fastest strategy in the table, because nobody ever waits. Speed is not evidence that
+a pool is being shared correctly.
+
+### 2. `StaticAssignment` — safe and slow
+
+The legacy fix: hard-code an account id per test at setup ("this suite always logs in as ACC-03").
+There are more tests than ids, so several tests share one id. The rules are the whole story:
+
+- a test may use **only** its assigned account;
+- if that account is busy the test waits, **even when other accounts sit idle**.
+
+Mutual exclusion is genuine (one monitor per account), so collisions are zero. But the wall clock is
+now set by the most contended id rather than by the pool size: with 6 tests pinned to each of 4 ids,
+those tests run 6-deep in a queue while the other 4 accounts do nothing.
+
+### 3. `LeaseBroker` — safe and fast
+
+Three changes, one per problem:
+
+- **Indivisible reserve-if-free.** "Is it free?" and "it's mine now" happen in one critical section
+  under the broker's lock, and the holder field lives in a private slot nothing outside the broker
+  can reach, so two callers can never take the same account. Fixes strategy 1.
+- **`acquire(owner, selector)`.** A caller asks for *any* free account carrying the tags it needs
+  instead of naming an id, so every account is usable by every caller. Fixes strategy 2.
+- **TTL leases.** Every claim carries an expiry. An owner that crashes, hangs or is killed without
+  releasing has its lease reclaimed automatically, so one dead test cannot permanently shrink the
+  pool. Reclaim runs on the acquiring thread under the lock — no background thread, nothing to shut
+  down.
+
+Waiters block on a `Condition` rather than spinning, and the lock is **fair**, so no caller barges
+past callers already queued for it. That is a guarantee about the lock and not about the resource:
+a waiter whose reclaim poll expires goes back to the tail of the queue, so callers that arrived
+later are routinely served first. Waiters keep making progress — the acquire timeout is what bounds
+the wait, not the ordering.
+
 ## Running it
 
 Plain JDK (21+), no build tool:
@@ -254,7 +256,7 @@ runtime dependencies.
 Illustrative run on an 8-core Windows laptop, Temurin JDK 21:
 
 ```
-test-account-broker
+lease-pool
 pool=8, parallel tests=24, tests per static id=6, work=40 ms/test
 1 warm-up round + 5 measured rounds, median reported
 ideal wall clock for a fully shared pool: 120 ms
@@ -266,7 +268,7 @@ StaticAssignment             0             280          4 / 8    one fixed resou
 LeaseBroker                  0             139          8 / 8    claim under one lock + selector + TTL leases
 
 TTL reclaim demo (a test that never releases)
-crashing-test leased ACC-ADM (adm@example.test, ttl 150 ms), then died without releasing
+crashing-test leased ACC-ADM (adm@example.test, ttl 150 ms), then crashed without releasing
 next-test leased ACC-ADM after 1 expired lease(s) were reclaimed
 crashing-test released its expired lease; ACC-ADM still held by next-test
 ```

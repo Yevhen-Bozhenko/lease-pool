@@ -14,13 +14,13 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>demo</groupId>
-  <artifactId>test-account-broker</artifactId>
+  <groupId>io.github.yevhen-bozhenko</groupId>
+  <artifactId>lease-pool</artifactId>
   <version>1.0.0</version>
   <packaging>jar</packaging>
 
-  <name>test-account-broker</name>
-  <description>Three strategies for sharing a limited pool of test accounts across parallel tests.</description>
+  <name>lease-pool</name>
+  <description>A reserve-if-free resource pool with expiring leases, and a benchmark of three ways to share one.</description>
 
   <licenses>
     <license>

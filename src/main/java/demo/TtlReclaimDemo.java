@@ -26,7 +26,7 @@ final class TtlReclaimDemo {
                 TTL_MILLIS, 5_000);
 
         Lease<String> crashed = broker.acquire("crashing-test", Selector.tagged("admin"));
-        System.out.printf("crashing-test leased %s (%s, ttl %d ms), then died without releasing%n",
+        System.out.printf("crashing-test leased %s (%s, ttl %d ms), then crashed without releasing%n",
                 crashed.resource().id(), crashed.get(), TTL_MILLIS);
 
         Thread.sleep(TTL_MILLIS + 100);
