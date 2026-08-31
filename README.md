@@ -268,7 +268,7 @@ runtime dependencies.
 
 Illustrative run on an 8-core Windows laptop, Temurin JDK 21:
 
-```
+```text
 lease-pool
 pool=8, parallel tests=24, tests per static id=6, work=40 ms/test
 1 warm-up round + 5 measured rounds, median reported

@@ -24,7 +24,6 @@ public final class NaiveSharedList<T> implements ResourcePool<T> {
 
     /** Lets a test shorten the limit so it can be reached without a 30 s wait. Milliseconds. */
     NaiveSharedList(List<Resource<T>> resources, long raceWindowMillis, long spinLimitMillis) {
-        // An empty pool would otherwise spin out the whole limit before naming the real mistake.
         if (resources.isEmpty() || raceWindowMillis < 0 || spinLimitMillis <= 0) {
             throw new IllegalArgumentException(
                     "need a non-empty pool, a non-negative race window and a positive spin limit");
@@ -38,11 +37,9 @@ public final class NaiveSharedList<T> implements ResourcePool<T> {
         this.spinLimitNanos = TimeUnit.MILLISECONDS.toNanos(spinLimitMillis);
     }
 
-    /** No waiting and no fairness. The one concession is the spin limit, so a fully-held pool fails
-     *  loudly instead of pinning a core until you kill the JVM.
-     *
-     *  <p>It also cannot tell a typo from a busy pool: {@code LeaseBroker} rejects an impossible
-     *  selector up front, while here the same typo spins out the limit and is reported as "busy".
+    /** Never waits and never takes turns. The spin limit is the only concession: when everything
+     *  is taken, it gives up loudly instead of spinning forever. A selector that matches nothing
+     *  looks the same as a busy pool here.
      *
      *  @throws IllegalStateException if nothing looks free before the spin limit elapses */
     @Override
@@ -56,8 +53,7 @@ public final class NaiveSharedList<T> implements ResourcePool<T> {
                     return new Lease<>(this, slot.resource, owner); //  "owner" is evicted mid-test
                 }
             }
-            // Only on the losing path, so the winning one is unchanged. Thread.yield() never throws
-            // and never clears the flag, so the spin has to check it itself.
+            // Thread.yield() never throws and never clears the flag, so the spin checks it itself.
             if (Thread.interrupted()) {
                 throw new InterruptedException(owner + " interrupted while spinning for a resource");
             }
@@ -67,15 +63,14 @@ public final class NaiveSharedList<T> implements ResourcePool<T> {
                         + TimeUnit.NANOSECONDS.toMillis(spinLimitNanos)
                         + " ms without seeing a free resource");
             }
-            // Step aside rather than sleep: a 1 ms sleep really takes ~15 ms on Windows, and the
-            // table would read as if resources were scarce rather than as a timer quirk.
+            // Yield rather than sleep: a 1 ms sleep really takes ~15 ms on Windows.
             Thread.yield();
         }
     }
 
     /** THE RACE WINDOW, between the check and the claim above: nothing stops another thread passing
-     *  the same check on the same slot. Widening it does not *cause* the bug — the scan races at
-     *  0 too — it only makes the damage land identically on every run. */
+     *  the same check on the same slot. Widening it does not *cause* the bug, it only makes the
+     *  damage land identically on every run. */
     private void widenRaceWindow() throws InterruptedException {
         Thread.sleep(raceWindowMillis);
     }

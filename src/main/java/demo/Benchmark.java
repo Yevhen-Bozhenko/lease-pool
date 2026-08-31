@@ -18,9 +18,9 @@ import java.util.function.ToLongFunction;
  *  {@code PARALLEL_TESTS} threads start together, each leases a resource, does
  *  {@code WORK_DURATION_MILLIS} of pretend work, and releases it.
  *
- *  <p>The collision and resources-used columns are exact by construction — no randomness, fixed
- *  order, a discarded warm-up, a median. Durations still move 10-15%: that is the sleep in
- *  {@code runOneTest}, not the strategies, so read them as a ratio. See the README. */
+ *  <p>The collision and resources-used columns are exact: no randomness, fixed order, a discarded
+ *  warm-up, a median. Durations still move 10-15%, which is the sleep rather than the strategies,
+ *  so read them as a ratio. */
 public final class Benchmark {
 
     static final int POOL_SIZE = 8;
@@ -122,8 +122,8 @@ public final class Benchmark {
         } // close() waits for every task to finish
         long millis = (System.nanoTime() - startNanos) / 1_000_000;
 
-        // A round that lost a test measured less work, and the median would hide it. The completion
-        // count is what makes this airtight: an Error never reaches the catches above.
+        // A round that lost a test measured less work, and the median would hide it. Counting
+        // completions catches even an Error, which never reaches the catches above.
         if (completed.size() != tests.size()) {
             throw new IllegalStateException(strategy.getClass().getSimpleName() + ": only "
                     + completed.size() + " of " + tests.size() + " tests completed"
@@ -138,7 +138,7 @@ public final class Benchmark {
             String id = lease.resource().id();
             detector.recordAcquired(id, test);
             try {
-                // Identical in all three rows, so only acquire and release differ. Also the
+                // The same in all three rows, so only acquire and release differ. It is also the
                 // variance floor: 40 ms of sleep costs 40-62 ms against Windows' ~15.6 ms tick.
                 Thread.sleep(WORK_DURATION_MILLIS);
             } finally {
@@ -147,9 +147,8 @@ public final class Benchmark {
         }
     }
 
-    /** Called once per round, so no round inherits another's state. The payload is a stand-in for
-     *  whatever a real caller leases; the benchmark only times acquire and release, so it never
-     *  reads one. */
+    /** Called once per round, so no round inherits another's state. The payload stands in for
+     *  whatever a real caller leases; the benchmark never reads one. */
     private static List<Resource<String>> newPool() {
         List<Resource<String>> resources = new ArrayList<>();
         for (int i = 1; i <= POOL_SIZE; i++) {

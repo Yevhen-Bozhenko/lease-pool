@@ -7,9 +7,9 @@ import io.github.yevhenbozhenko.pool.Selector;
 import java.util.List;
 import java.util.Set;
 
-/** The broker's third idea, shown rather than measured: it needs a crashed owner to be interesting,
- *  so it does not fit the benchmark's uniform workload. Also the one place the payload is visible —
- *  what comes back from a lease is the caller's own type, not an id to look up. */
+/** The broker's third idea, shown rather than measured: it needs an owner that crashes, which the
+ *  benchmark's uniform workload has no room for. Also the one place you can see the payload: a
+ *  lease hands back the caller's own object, not an id to look up. */
 final class TtlReclaimDemo {
 
     private static final long TTL_MILLIS = 150;

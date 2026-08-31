@@ -5,9 +5,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Counts owners that ever shared a resource by registration, not sampling: polling the holder
- *  would miss a collision that opens and closes between polls. Observes only what the workload did,
- *  so all three rows are scored by identical rules. */
+/** Counts owners that ever shared a resource. It records every acquire instead of polling who
+ *  holds what, because polling would miss a collision that opens and closes between two looks.
+ *  It watches only what the workload did, so all three rows are scored the same way. */
 final class CollisionDetector {
 
     private final Map<String, Set<String>> ownersByResource = new ConcurrentHashMap<>();
@@ -24,8 +24,7 @@ final class CollisionDetector {
     }
 
     void recordReleased(String resourceId, String owner) {
-        // A release always follows the acquire that created the key. Said out loud, because a bare
-        // NPE here would surface as "only N of 24 tests completed" and blame the strategy.
+        // A bare NPE here would read as "only N of 24 tests completed" and blame the strategy.
         Objects.requireNonNull(ownersByResource.get(resourceId), resourceId + " was never acquired")
                 .remove(owner);
     }
@@ -35,7 +34,7 @@ final class CollisionDetector {
         return collided.size();
     }
 
-    /** Distinct resources the workload ever touched; keys outlive the owners registered on them. */
+    /** Distinct resources the workload ever touched. A resource stays counted after its owners go. */
     int resourcesUsed() {
         return ownersByResource.size();
     }
