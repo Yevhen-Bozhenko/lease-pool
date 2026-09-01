@@ -64,7 +64,8 @@ public final class StaticAssignment<T> implements ResourcePool<T> {
     }
 
     /** Ignores a lease it never issued rather than throwing, since that usually arrives from
-     *  {@code Lease.close()} and would fail a passing test. Matching is by owner name only. */
+     *  {@code Lease.close()} and would fail a passing test. Matches the owner name and the resource
+     *  id, never the lease itself, so a hand-built lease naming both is indistinguishable. */
     @Override
     public void release(Lease<T> lease) {
         Slot<T> slot = assignment.get(lease.owner());

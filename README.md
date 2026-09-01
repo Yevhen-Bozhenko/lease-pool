@@ -120,11 +120,12 @@ Two files show the same thing wired into a real framework, leasing an account ar
 method and returning it however the test ends.
 
 `src/test/java/demo/BrokerJUnitExampleTest.java` holds a JUnit 5 extension: `beforeEach` acquires,
-`afterEach` releases, and a `ParameterResolver` hands the payload to the test method as an argument,
-so the test itself never mentions the pool. The extension is the nested `LeasedAccount` class, and
-it belongs in your project rather than in the library, since shipping it would put JUnit on the
-library's compile path. The file is named `...Test`, so surefire runs it and the example cannot rot
-unnoticed.
+`afterEach` releases, and a `ParameterResolver` fills any parameter marked `@LeasedLogin`, so the
+test itself never mentions the pool. It goes by that mark, not the type, so it never clashes with
+another resolver that hands out a Login. The extension is the nested `LeasedAccount` class plus the
+`@LeasedLogin` annotation beside it, and they belong in your project rather than in the library,
+since shipping them would put JUnit on the library's compile path. The file is named `...Test`, so
+surefire runs it and the example cannot rot unnoticed.
 
 `src/test/java/demo/BrokerTestNgExample.java` is the same shape in TestNG, with
 `@BeforeMethod`/`@AfterMethod` and `alwaysRun` on the teardown so a failing test still returns its
@@ -243,10 +244,9 @@ Thirteen JUnit cases run. Eleven pin the claims this README makes — nine on th
 naive strategy's spin bound, one on the static strategy refusing a lease over a resource it never
 issued. The other two are the JUnit usage example above; they pin only that the wiring compiles and
 runs, while an `@AfterAll` beside them asserts every lease came back, which is the part that catches
-a regression. Each of the eleven carries a `@DisplayName` stating
-what it checks, so `LeaseBrokerTest.java` reads as a list of the guarantees.
-It sits in the library's own package and touches nothing from `demo`, so the library is testable by
-itself.
+a regression. Each of the eleven carries a `@DisplayName` stating what it checks, so
+`LeaseBrokerTest.java` reads as a list of the guarantees. It sits in the library's own package and
+touches nothing from `demo`, so the library is testable by itself.
 
 ```bash
 mvn test

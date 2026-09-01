@@ -269,7 +269,12 @@ class LeaseBrokerTest {
                         new Resource<>("ACC-ADM", Set.of("admin"), "adm@test")),
                 5_000, 2_000);
 
-        assertThrows(IllegalArgumentException.class,
+        IllegalArgumentException spanning = assertThrows(IllegalArgumentException.class,
                 () -> broker.acquire("test-A", Selector.tagged("standard", "admin")));
+
+        // Both tags exist in the pool, so the offers half of the message names them either way.
+        // Only the rendered selector shows the message repeating back what was asked for.
+        assertTrue(spanning.getMessage().contains("tags [admin, standard]"),
+                "the diagnostic must name the combination asked for: " + spanning.getMessage());
     }
 }

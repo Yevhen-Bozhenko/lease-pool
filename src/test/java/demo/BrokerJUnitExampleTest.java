@@ -7,6 +7,10 @@ import io.github.yevhenbozhenko.pool.Lease;
 import io.github.yevhenbozhenko.pool.LeaseBroker;
 import io.github.yevhenbozhenko.pool.Resource;
 import io.github.yevhenbozhenko.pool.Selector;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -20,13 +24,21 @@ import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.ParameterContext;
 import org.junit.jupiter.api.extension.ParameterResolver;
 
-/** The same wiring as {@link BrokerTestNgExample}, for JUnit 5. Copy the extension into your own
- *  project: shipping it in the library would put JUnit on the library's compile path. The name ends
- *  in Test so surefire runs it, which is what keeps the example from rotting. */
+/** The same wiring as {@link BrokerTestNgExample}, for JUnit 5. Copy {@code LeasedAccount} and the
+ *  {@code @LeasedLogin} annotation it reads into your own project: shipping them in the library
+ *  would put JUnit on the library's compile path. The name ends in Test so surefire runs it,
+ *  which is what keeps the example from rotting. */
 @ExtendWith(BrokerJUnitExampleTest.LeasedAccount.class)
 class BrokerJUnitExampleTest {
 
     private record Login(String user, String password) {
+    }
+
+    /** Marks the argument the extension fills. It goes by this mark, not the type, so it never
+     *  clashes with another resolver that hands out a Login. */
+    @Retention(RetentionPolicy.RUNTIME)
+    @Target(ElementType.PARAMETER)
+    @interface LeasedLogin {
     }
 
     /** Acquire before each test, hand the payload to the method, release after. */
@@ -68,8 +80,7 @@ class BrokerJUnitExampleTest {
 
         @Override
         public boolean supportsParameter(ParameterContext parameter, ExtensionContext context) {
-            return parameter.getParameter().getType() == Login.class
-                    && context.getTestMethod().isPresent();
+            return parameter.isAnnotated(LeasedLogin.class);
         }
 
         @Override
@@ -86,12 +97,12 @@ class BrokerJUnitExampleTest {
     }
 
     @Test
-    void checkoutGetsALeasedAccount(Login login) {
+    void checkoutGetsALeasedAccount(@LeasedLogin Login login) {
         assertNotNull(login.user());
     }
 
     @Test
-    void refundGetsALeasedAccount(Login login) {
+    void refundGetsALeasedAccount(@LeasedLogin Login login) {
         assertNotNull(login.user());
     }
 }
