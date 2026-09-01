@@ -73,11 +73,13 @@
         <artifactId>maven-jar-plugin</artifactId>
         <version>3.4.1</version>
         <configuration>
-          <archive>
-            <manifest>
-              <mainClass>demo.Benchmark</mainClass>
-            </manifest>
-          </archive>
+          <!-- Ship the library and nothing else. An include rather than an exclude: a class added
+               outside this package stays out of the jar by default. That also leaves no Main-Class,
+               so the jar is no longer runnable; the benchmark runs from target/classes through
+               mvn compile exec:java. -->
+          <includes>
+            <include>io/github/yevhenbozhenko/pool/**</include>
+          </includes>
         </configuration>
       </plugin>
       <plugin>
