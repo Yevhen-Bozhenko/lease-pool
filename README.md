@@ -1,5 +1,7 @@
 # lease-pool
 
+[![build](https://github.com/Yevhen-Bozhenko/lease-pool/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/Yevhen-Bozhenko/lease-pool/actions/workflows/ci.yml)
+
 A small, dependency-free Java library for handing a limited pool of shared resources to parallel
 workers: **reserve-if-free**, so two workers never hold the same resource, and **expiring leases**, so
 a worker that never releases cannot shrink the pool. JDK 21+, six files, no dependencies.
@@ -238,6 +240,12 @@ then the TTL reclaim demo. Each strategy gets a fresh pool every round, so nothi
 state. To change the shape of the run, edit the constants at the top of `Benchmark.java` (see
 [Tuning](#tuning)).
 
+Every command above also runs in GitHub Actions, on a clean Ubuntu box with JDK 21: each push to
+main, which is what the badge at the top of this page reports, and each pull request. So these
+instructions cannot rot quietly. The job adds one check of its own, that the packaged jar holds the
+library package and nothing else, which is the one thing neither the tests nor the benchmark would
+notice. It is `.github/workflows/ci.yml`, and the comments in it say why each step is there.
+
 ### Tests
 
 Thirteen JUnit cases run. Eleven pin the claims this README makes — nine on the broker, one on the
@@ -387,7 +395,8 @@ It consumes the library exactly as your own project would.
 
 Tests follow the same line. `src/test/java/io/github/yevhenbozhenko/pool/LeaseBrokerTest.java` tests
 the library alone; `src/test/java/demo/` holds one test per flawed strategy and the two framework
-usage examples. Every class opens with a comment saying what it is for. `pom.xml` is optional.
+usage examples. Every class opens with a comment saying what it is for. `pom.xml` is optional,
+though the CI job builds through it. See [Running it](#running-it).
 
 ## Caveats
 
@@ -397,9 +406,9 @@ usage examples. Every class opens with a comment saying what it is for. `pom.xml
   synchronisation — waiters use a `Condition`, retries use `Thread.yield`, and the tests use an
   injected clock.
 - Deliberately out of scope: no logging framework, no CLI parsing, no external config, no
-  persistence, no CI pipeline, no publishing setup, no fourth strategy. Configuration is the
-  constants at the top of `Benchmark.java` and output is `System.out`, so the concurrency is what a
-  reader spends their attention on.
+  persistence, no publishing setup, no fourth strategy. Configuration is the constants at the top of
+  `Benchmark.java` and output is `System.out`, so the concurrency is what a reader spends their
+  attention on.
 - Tags are plain `String`s rather than an enum. An enum would catch typos at compile time, but it
   would also pin the broker to one vocabulary, and being vocabulary-agnostic is the point. The
   up-front check in `acquire` recovers most of the benefit at run time. The payload is a type

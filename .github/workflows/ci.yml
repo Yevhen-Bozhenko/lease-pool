@@ -1,0 +1,58 @@
+# Builds and tests the library on pushes to main and on pull requests. The badge follows push runs
+# on main, so a pull request from a fork cannot turn it red.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # The build only reads the repo, and mvn runs plugin code it downloads from Maven Central.
+    permissions:
+      contents: read
+    # The demo can hang rather than fail: StaticAssignment waits with no timeout, so a lost
+    # notifyAll parks every worker. Ten minutes is a bound for a hang, not for a slow run.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+
+      # This is the first thing the README tells a reader to run, and nothing else here would
+      # notice if it broke, because mvn compiles whatever it finds.
+      - name: Compile the way the README says first
+        run: javac -d out src/main/java/io/github/yevhenbozhenko/pool/*.java src/main/java/demo/*.java
+
+      - name: Test and package
+        run: mvn -B verify
+
+      # A jar that drops a class still builds fine, and the README promises the library can be
+      # taken on its own, so compare what shipped against what was compiled.
+      - name: Check the jar holds the library and nothing else
+        run: |
+          jar=$(ls target/*.jar | grep -Ev -- '-(sources|javadoc)\.jar$')
+          shipped=$(jar tf "$jar" | grep '\.class$' || true)
+          built=$(find target/classes/io/github/yevhenbozhenko/pool -name '*.class' | wc -l)
+          echo "$jar"; echo "$shipped"
+          if [ "$built" -eq 0 ]; then
+            echo "no library classes were compiled; this step's package path is stale"; exit 1
+          fi
+          if [ "$(echo "$shipped" | grep -c .)" -ne "$built" ]; then
+            echo "jar holds $(echo "$shipped" | grep -c .) of the library's $built classes"; exit 1
+          fi
+          if echo "$shipped" | grep -qv '^io/github/yevhenbozhenko/pool/'; then
+            echo "jar holds classes from outside the library"; exit 1
+          fi
+
+      # The demo is not in the jar and only two of its classes have tests. The benchmark asserts
+      # nothing; what it catches is the demo failing to run at all.
+      - name: Run the benchmark
+        run: mvn -B -q compile exec:java
