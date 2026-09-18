@@ -46,6 +46,20 @@ survives that move; the lock does not.
 
 ## Using the broker in your own project
 
+```xml
+<dependency>
+  <groupId>io.github.yevhen-bozhenko</groupId>
+  <artifactId>lease-pool</artifactId>
+  <version>1.0.0</version>
+</dependency>
+```
+
+Gradle: `implementation("io.github.yevhen-bozhenko:lease-pool:1.0.0")`.
+
+Note the hyphen. The groupId is `io.github.yevhen-bozhenko`, while the package you import is
+`io.github.yevhenbozhenko`, because a Java package cannot carry a hyphen and a groupId can. On the
+module path the jar is `io.github.yevhenbozhenko.pool`.
+
 The broker knows nothing about tests, and nothing about accounts either. Three pieces of vocabulary
 are yours to define:
 
