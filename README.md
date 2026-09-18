@@ -242,9 +242,10 @@ state. To change the shape of the run, edit the constants at the top of `Benchma
 
 Every command above also runs in GitHub Actions, on a clean Ubuntu box with JDK 21: each push to
 main, which is what the badge at the top of this page reports, and each pull request. So these
-instructions cannot rot quietly. The job adds one check of its own, that the packaged jar holds the
-library package and nothing else, which is the one thing neither the tests nor the benchmark would
-notice. It is `.github/workflows/ci.yml`, and the comments in it say why each step is there.
+instructions cannot rot quietly. The job adds one check of its own, that the jar, the sources jar
+and the javadoc jar hold the library and nothing else, which is the one thing neither the tests nor
+the benchmark would notice. It is `.github/workflows/ci.yml`, and the comments in it say why each
+step is there.
 
 ### Tests
 
@@ -395,8 +396,9 @@ It consumes the library exactly as your own project would.
 
 Tests follow the same line. `src/test/java/io/github/yevhenbozhenko/pool/LeaseBrokerTest.java` tests
 the library alone; `src/test/java/demo/` holds one test per flawed strategy and the two framework
-usage examples. Every class opens with a comment saying what it is for. `pom.xml` is optional,
-though the CI job builds through it. See [Running it](#running-it).
+usage examples. Every class opens with a comment saying what it is for. `pom.xml` is optional for
+running the demo, though the CI job builds through it and the release setup lives in it. See
+[Running it](#running-it).
 
 ## Caveats
 
@@ -406,9 +408,8 @@ though the CI job builds through it. See [Running it](#running-it).
   synchronisation — waiters use a `Condition`, retries use `Thread.yield`, and the tests use an
   injected clock.
 - Deliberately out of scope: no logging framework, no CLI parsing, no external config, no
-  persistence, no publishing setup, no fourth strategy. Configuration is the constants at the top of
-  `Benchmark.java` and output is `System.out`, so the concurrency is what a reader spends their
-  attention on.
+  persistence, no fourth strategy. Configuration is the constants at the top of `Benchmark.java`
+  and output is `System.out`, so the concurrency is what a reader spends their attention on.
 - Tags are plain `String`s rather than an enum. An enum would catch typos at compile time, but it
   would also pin the broker to one vocabulary, and being vocabulary-agnostic is the point. The
   up-front check in `acquire` recovers most of the benefit at run time. The payload is a type

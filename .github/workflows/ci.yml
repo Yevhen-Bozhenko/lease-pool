@@ -36,7 +36,7 @@ jobs:
 
       # A jar that drops a class still builds fine, and the README promises the library can be
       # taken on its own, so compare what shipped against what was compiled.
-      - name: Check the jar holds the library and nothing else
+      - name: Check the jars hold the library and nothing else
         run: |
           jar=$(ls target/*.jar | grep -Ev -- '-(sources|javadoc)\.jar$')
           shipped=$(jar tf "$jar" | grep '\.class$' || true)
@@ -50,6 +50,27 @@ jobs:
           fi
           if echo "$shipped" | grep -qv '^io/github/yevhenbozhenko/pool/'; then
             echo "jar holds classes from outside the library"; exit 1
+          fi
+          # Get the pom's source include wrong and Maven skips the sources jar without an error.
+          sources=$(ls target/*-sources.jar) || { echo "no sources jar was built"; exit 1; }
+          packaged=$(jar tf "$sources" | grep '\.java$' || true)
+          written=$(find src/main/java/io/github/yevhenbozhenko/pool -name '*.java' | wc -l)
+          echo "$sources"; echo "$packaged"
+          if [ "$(echo "$packaged" | grep -c .)" -ne "$written" ]; then
+            echo "sources jar holds $(echo "$packaged" | grep -c .) of the library's $written files"; exit 1
+          fi
+          if echo "$packaged" | grep -qv '^io/github/yevhenbozhenko/pool/'; then
+            echo "sources jar holds files from outside the library"; exit 1
+          fi
+          # Drop the pom's subpackages line and javadoc documents the demo too, just as quietly.
+          javadoc=$(ls target/*-javadoc.jar) || { echo "no javadoc jar was built"; exit 1; }
+          documented=$(jar tf "$javadoc" | grep 'package-summary\.html$' | sed 's#/package-summary\.html$##')
+          echo "$javadoc"; echo "$documented"
+          if [ -z "$documented" ]; then
+            echo "javadoc jar documents no package at all"; exit 1
+          fi
+          if echo "$documented" | grep -qvE '^io/github/yevhenbozhenko/pool(/|$)'; then
+            echo "javadoc jar documents more than the library"; exit 1
           fi
 
       # The demo is not in the jar and only two of its classes have tests. The benchmark asserts

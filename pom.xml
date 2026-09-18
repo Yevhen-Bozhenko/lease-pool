@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Optional. The demo is designed to build with plain javac:
+  Optional for the demo, which is designed to build with plain javac:
 
       javac -d out src/main/java/io/github/yevhenbozhenko/pool/*.java src/main/java/demo/*.java
       java -cp out demo.Benchmark
 
-  This pom exists only so the project drops into a Maven-shaped world unchanged:
+  This pom drops the project into a Maven-shaped world unchanged:
 
       mvn -q compile exec:java
+
+  It is also what publishes the library. See the release profile at the end of the file.
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -19,8 +21,10 @@
   <version>1.0.0</version>
   <packaging>jar</packaging>
 
+  <!-- Maven Central will not accept a release without the url, licence, developer and scm blocks. -->
   <name>lease-pool</name>
   <description>A reserve-if-free resource pool with expiring leases, and a benchmark of three ways to share one.</description>
+  <url>https://github.com/Yevhen-Bozhenko/lease-pool</url>
 
   <licenses>
     <license>
@@ -29,6 +33,19 @@
       <distribution>repo</distribution>
     </license>
   </licenses>
+
+  <developers>
+    <developer>
+      <name>Yevhen Bozhenko</name>
+      <url>https://github.com/Yevhen-Bozhenko</url>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/Yevhen-Bozhenko/lease-pool.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/Yevhen-Bozhenko/lease-pool.git</developerConnection>
+    <url>https://github.com/Yevhen-Bozhenko/lease-pool</url>
+  </scm>
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
@@ -83,6 +100,44 @@
         </configuration>
       </plugin>
       <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <version>3.3.1</version>
+        <configuration>
+          <!-- Central wants a sources jar. Same list as above, or the demo ships as source. -->
+          <includes>
+            <include>io/github/yevhenbozhenko/pool/**</include>
+          </includes>
+        </configuration>
+        <executions>
+          <execution>
+            <id>attach-sources</id>
+            <goals>
+              <goal>jar-no-fork</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <version>3.11.2</version>
+        <configuration>
+          <!-- Central wants a javadoc jar. Only the library goes in it, and CI checks that, because
+               dropping this line documents the demo as well without failing anything. Javadoc keeps
+               its old output, so check a change here with mvn clean verify. -->
+          <subpackages>io.github.yevhenbozhenko.pool</subpackages>
+        </configuration>
+        <executions>
+          <execution>
+            <id>attach-javadocs</id>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>exec-maven-plugin</artifactId>
         <version>3.2.0</version>
@@ -92,4 +147,57 @@
       </plugin>
     </plugins>
   </build>
+
+  <!--
+    To release: mvn -Prelease deploy. You need a GPG key on a public keyserver, and a Central token
+    in ~/.m2/settings.xml under the server id "central". autoPublish is off, so the upload waits in
+    the Portal until you press publish. Once published, it stays for good.
+  -->
+  <profiles>
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <!-- Javadoc never clears its own output folder, so a leftover page from an earlier run
+               would ship. Wiping target first is the only way to be sure of what goes up. -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-clean-plugin</artifactId>
+            <version>3.5.0</version>
+            <executions>
+              <execution>
+                <id>clean-before-release</id>
+                <phase>initialize</phase>
+                <goals>
+                  <goal>clean</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.8</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.11.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <autoPublish>false</autoPublish>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
