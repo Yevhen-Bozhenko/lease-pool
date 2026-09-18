@@ -97,6 +97,13 @@
           <includes>
             <include>io/github/yevhenbozhenko/pool/**</include>
           </includes>
+          <!-- The name a consumer writes in "requires". Without it Java builds one from the file
+               name, lease.pool, which is not ours to keep and changes if the jar is renamed. -->
+          <archive>
+            <manifestEntries>
+              <Automatic-Module-Name>io.github.yevhenbozhenko.pool</Automatic-Module-Name>
+            </manifestEntries>
+          </archive>
         </configuration>
       </plugin>
       <plugin>
@@ -127,6 +134,13 @@
                dropping this line documents the demo as well without failing anything. Javadoc keeps
                its old output, so check a change here with mvn clean verify. -->
           <subpackages>io.github.yevhenbozhenko.pool</subpackages>
+          <!-- Javadoc runs all its checks by default. This one turns off the group that wants a
+               comment on every member and a tag on every parameter and return, so nothing warns
+               if a new method ships with no javadoc. Broken links and bad HTML still fail. -->
+          <doclint>all,-missing</doclint>
+          <!-- Without this, the module name above makes javadoc look for sources on a module path
+               and find none. The build then fails with "No source files for package". -->
+          <legacyMode>true</legacyMode>
         </configuration>
         <executions>
           <execution>

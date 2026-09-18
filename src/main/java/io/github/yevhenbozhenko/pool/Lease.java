@@ -29,10 +29,12 @@ public final class Lease<T> implements AutoCloseable {
         return resource.payload();
     }
 
+    /** The resource itself, for its id and tags. */
     public Resource<T> resource() {
         return resource;
     }
 
+    /** Who asked for it: the owner passed to acquire. */
     public String owner() {
         return owner;
     }

@@ -16,6 +16,7 @@ import java.util.TreeSet;
 @FunctionalInterface
 public interface Selector {
 
+    /** True if a resource with these tags will do. */
     boolean matches(Set<String> tags);
 
     /** Any resource in the pool will do. */

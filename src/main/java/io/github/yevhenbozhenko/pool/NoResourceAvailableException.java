@@ -14,6 +14,7 @@ public final class NoResourceAvailableException extends RuntimeException {
     private final transient Selector selector;
     private final Duration waited;
 
+    /** Pools build this when acquire gives up. */
     public NoResourceAvailableException(String owner, Selector selector, Duration waited) {
         super(owner + " waited " + waited.toMillis() + " ms for " + selector + " and got none");
         this.owner = owner;
@@ -21,6 +22,7 @@ public final class NoResourceAvailableException extends RuntimeException {
         this.waited = waited;
     }
 
+    /** Who was waiting. */
     public String owner() {
         return owner;
     }

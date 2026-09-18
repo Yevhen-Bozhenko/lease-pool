@@ -157,6 +157,7 @@ public final class LeaseBroker<T> implements ResourcePool<T> {
         }
     }
 
+    /** How many held resources the broker has taken back after their lease ran out. */
     public int reclaimedLeaseCount() {
         lock.lock();
         try {

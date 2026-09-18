@@ -16,6 +16,7 @@ import java.util.Set;
  *  @param <T> what the caller gets back from {@link Lease#get()} */
 public record Resource<T>(String id, Set<String> tags, T payload) {
 
+    /** Rejects a null id or tags, and copies the tag set. */
     public Resource {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(tags, "tags");
