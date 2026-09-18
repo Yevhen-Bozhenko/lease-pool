@@ -1,6 +1,6 @@
 # lease-pool
 
-[![build](https://github.com/Yevhen-Bozhenko/lease-pool/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/Yevhen-Bozhenko/lease-pool/actions/workflows/ci.yml)
+[![build](https://github.com/Yevhen-Bozhenko/lease-pool/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/Yevhen-Bozhenko/lease-pool/actions/workflows/ci.yml) [![Maven Central](https://img.shields.io/maven-central/v/io.github.yevhen-bozhenko/lease-pool)](https://central.sonatype.com/artifact/io.github.yevhen-bozhenko/lease-pool)
 
 A small, dependency-free Java library for handing a limited pool of shared resources to parallel
 workers: **reserve-if-free**, so two workers never hold the same resource, and **expiring leases**, so
